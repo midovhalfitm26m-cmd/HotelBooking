@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -167,40 +167,17 @@ class HotelService
             return OperationResult<Booking>.Fail($"Номера {roomNumber} не існує.");
 
         clientName = clientName?.Trim();
-        if (string.IsNullOrEmpty(clientName))
-            return OperationResult<Booking>.Fail("Вкажіть ім'я клієнта.");
+        string? error = ValidateBookingRequest(room, clientName, startDate, endDate, guests);
+        if (error is not null)
+            return OperationResult<Booking>.Fail(error);
 
-        if (startDate >= endDate)
-            return OperationResult<Booking>.Fail(
-                "Дата виїзду має бути пізніше за дату заселення (мінімум 1 ніч).");
-
-        if (startDate < _today())
-            return OperationResult<Booking>.Fail("Не можна бронювати на минулі дати.");
-
-        if (guests <= 0)
-            return OperationResult<Booking>.Fail("Кількість гостей має бути не менше 1.");
-
-        if (guests > room.Capacity)
-            return OperationResult<Booking>.Fail(
-                $"Номер {roomNumber} вміщує максимум {room.Capacity} гост.");
-
-        var conflict = _bookings.FirstOrDefault(
-            b => b.RoomNumber == roomNumber && b.OverlapsWith(startDate, endDate));
+        var conflict = FindConflict(roomNumber, startDate, endDate);
         if (conflict is not null)
             return OperationResult<Booking>.Fail(
                 $"Номер {roomNumber} уже заброньовано з {conflict.StartDate:dd.MM.yyyy} " +
                 $"по {conflict.EndDate:dd.MM.yyyy}.");
 
-        var booking = new Booking
-        {
-            Id = _nextBookingId++,
-            RoomNumber = roomNumber,
-            ClientName = clientName,
-            Guests = guests,
-            StartDate = startDate,
-            EndDate = endDate,
-            TotalPrice = room.PricePerNight * (endDate.DayNumber - startDate.DayNumber)
-        };
+        var booking = CreateBooking(room, clientName!, startDate, endDate, guests);
         _bookings.Add(booking);
 
         return OperationResult<Booking>.Ok(booking,
@@ -208,6 +185,38 @@ class HotelService
             $"{startDate:dd.MM.yyyy}–{endDate:dd.MM.yyyy} ({booking.Nights} ноч.), " +
             $"разом {booking.TotalPrice:N2} грн.");
     }
+
+    private string? ValidateBookingRequest(
+        Room room, string? clientName, DateOnly startDate, DateOnly endDate, int guests)
+    {
+        if (string.IsNullOrEmpty(clientName))
+            return "Вкажіть ім'я клієнта.";
+        if (startDate >= endDate)
+            return "Дата виїзду має бути пізніше за дату заселення (мінімум 1 ніч).";
+        if (startDate < _today())
+            return "Не можна бронювати на минулі дати.";
+        if (guests <= 0)
+            return "Кількість гостей має бути не менше 1.";
+        if (guests > room.Capacity)
+            return $"Номер {room.RoomNumber} вміщує максимум {room.Capacity} гост.";
+        return null;
+    }
+
+    private Booking? FindConflict(int roomNumber, DateOnly startDate, DateOnly endDate) =>
+        _bookings.FirstOrDefault(b => b.RoomNumber == roomNumber && b.OverlapsWith(startDate, endDate));
+
+    private Booking CreateBooking(
+        Room room, string clientName, DateOnly startDate, DateOnly endDate, int guests) =>
+        new()
+        {
+            Id = _nextBookingId++,
+            RoomNumber = room.RoomNumber,
+            ClientName = clientName,
+            Guests = guests,
+            StartDate = startDate,
+            EndDate = endDate,
+            TotalPrice = room.PricePerNight * (endDate.DayNumber - startDate.DayNumber)
+        };
 
     public OperationResult CancelBooking(int bookingId)
     {
